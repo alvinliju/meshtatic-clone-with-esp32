@@ -5,82 +5,97 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0,  U8X8_PIN_NONE);
-#define CE_PIN 4
-#define CSN_PIN 5
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+#define CE_PIN 22
+#define CSN_PIN 21
 
-const byte reciverAddress[5] = {'R','x','A','A','A'};
+byte address[][6] = {"1Node", "2Node"}; // Fixed spelling
 
 RF24 radio(CE_PIN, CSN_PIN);
 
-char dataRecived[16];
-bool newData = false;
-
-void displayMessage(const char* message){
-  u8g2.begin();
+void displayMessage(const char* message) {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB14_tr);
   u8g2.drawStr(0, 20, message); 
   u8g2.sendBuffer();
-  delay(1000);
-}
-
-void sendData() {
-  displayMessage("Sending...");
-  
-  radio.stopListening();
-  char text[] = "Hello World!"; // Keep messages under 16 chars
-  radio.write(&text, sizeof(text));
-  
-  if(!radio.write(&text, sizeof(text))) {
-    displayMessage("mesage Failed!");
-    
-  } else {
-    displayMessage("Sent OK!");
-  }
-  delay(2000);
 }
 
 void setup(void) {
-
   Serial.begin(9600);
-  Serial.println("SimpleRx Starting");
-
-  displayMessage("Radio initializing..");
-
-  bool radioSucess = radio.begin();
-
-  if(!radioSucess){
-    displayMessage("Radio failed to start");
-  }
+  Wire.begin(25,26);  // SDA, SCL
+  u8g2.begin();  // Initialize display ONCE here
   
-  radio.setDataRate(RF24_250KBPS);
-  radio.openWritingPipe(reciverAddress); // Receiver's address
-  radio.setRetries(3, 5); // Retry 3x with 5ms delay
+  displayMessage("Initializing...");
+  Serial.println("\n\nStarting...");
+  delay(5000);
+
+
+  // Radio initialization
+  if (!radio.begin()) {
+    displayMessage("Radio FAIL");
+    Serial.println("Radio: FAIL");
+    while(1); // Halt on failure
+  }
+
+  if( !radio.isChipConnected() ) {
+    Serial.println("Chip: NOT FOUND");
+    displayMessage("Radio FAIL");
+    delay(2000);
+    while(1); // Halt on failure
+  }
+
+  radio.setPALevel(RF24_PA_MIN);
+  radio.setDataRate(RF24_2MBPS);
+  radio.setChannel(124);
+
+
+  radio.openWritingPipe(address[1]);
+  radio.openReadingPipe(1, address[0]);
+
+  randomSeed(analogRead(A0)); // Randomize the seed
   
-  displayMessage("Radio started");
-
+  radio.stopListening(); // Critical for transmitter! 
+  
+  displayMessage("Radio ready");
+  
 }
 
+void loop() {
 
-void getData(){
-  if(radio.available()){
-    radio.read(&dataRecived, sizeof(dataRecived));
-    displayMessage(dataRecived);
-    newData = true; //for state management
+  unsigned char data = random(0, 255);
+
+  radio.stopListening();
+
+  if(!radio.write(&data, sizeof(unsigned char))) {
+   displayMessage("Failed to send");
+    delay(2000);
+    while(1); 
   }
-}
 
-void showData(){
-  if(newData == true){
-    displayMessage(dataRecived);
-    newData = false;
+  if (!radio.write( &data, sizeof(unsigned char) )) {
+    displayMessage("Failed to send");
+    delay(2000);
   }
-}
 
-void loop(){
-  // getData();
-  // showData();
-  sendData(); 
-}
+  radio.startListening();
+  
+  // But we won't listen for long, 200 milliseconds is enough
+  unsigned long started_waiting_at = millis();
 
+  // Loop here until we get indication that some data is ready for us to read (or we time out)
+  while ( ! radio.available() ) {
+
+    // Oh dear, no response received within our timescale
+    if (millis() - started_waiting_at > 200 ) {
+      displayMessage("Timeout");
+      Serial.println("No response received - timeout!");
+      return;
+    }
+  }
+
+  
+  displayMessage("Message sent");
+  delay(1000);
+  
+}
+ 
